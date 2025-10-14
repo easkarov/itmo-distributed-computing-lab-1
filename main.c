@@ -65,9 +65,9 @@ int send_multicast(void *self, const Message *msg) {
     return 0;
 }
 
-int receive(void *self, local_id from, const Message *msg) {
-    ssize_t count = read(streams[process_info.id][from].inputStream, msg, sizeof(msg->s_payload));
-    if (count < sizeof(msg->s_payload)) {
+int receive(void *self, local_id from, Message *msg) {
+    ssize_t count = read(streams[process_info.id][from].inputStream, msg, sizeof(Message));
+    if (count < sizeof(Message)) {
         printf("%d: received insufficient number of bytes", process_info.id);
         return 1;
     }
@@ -76,7 +76,7 @@ int receive(void *self, local_id from, const Message *msg) {
     return 0;
 }
 
-int receive_multicast(void *self, const Message *msg) {
+int receive_multicast(void *self, Message *msg) {
     for (int8_t neighId = 0; neighId <= process_info.count; neighId++) {
         if (process_info.id != neighId && neighId != PARENT_ID) {
             receive(self, neighId, msg);
@@ -88,28 +88,38 @@ int receive_multicast(void *self, const Message *msg) {
 
 
 int child() {
-    char payload[MAX_PAYLOAD_LEN];
-    sprintf(payload, log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
-    Message message = {
+    Message startMessage = {
         .s_header = {
             .s_magic = MESSAGE_MAGIC,
-            .s_payload_len = 5,
+            .s_payload_len = 8,
             .s_type = STARTED,
             .s_local_time = (short) (process_info.id * 10 + 1),
         },
-        .s_payload = payload
+        .s_payload="STARTED"
     };
 
-    close_fds(process_info.id, process_info.count);
-    send_multicast(0, &message);
+    sprintf(startMessage.s_payload, log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
 
-    receive_multicast(0, &message);
+    close_fds(process_info.id, process_info.count);
+    send_multicast(0, &startMessage);
+
+    receive_multicast(0, &startMessage);
+
+    Message doneMessage = {
+            .s_header = {
+                    .s_magic = MESSAGE_MAGIC,
+                    .s_payload_len = 5,
+                    .s_type = STARTED,
+                    .s_local_time = (short) (process_info.id * 10 + 1),
+            },
+            .s_payload="DONE"
+    };
 
     printf("%d: working\n", process_info.id);
     // working...
-    send_multicast(0, "DONE", 5);
+    send_multicast(0, &doneMessage);
 
-    receive_multicast(0, 0, 5);
+    receive_multicast(0, &doneMessage);
 
     return 0;
 }
@@ -185,8 +195,11 @@ int main(int argc, char *argv[]) {
         pids[curId - 1] = childPid;
     }
 
-    receive_multicast(0, 0, 8);
-    receive_multicast(0, 0, 5);
+    Message startMessage = {0};
+    Message doneMessage = {0};
+
+    receive_multicast(0, &startMessage);
+    receive_multicast(0, &doneMessage);
 
     for (int curId = 0; curId < x; curId++) {
         waitpid(pids[curId], NULL, NULL);
