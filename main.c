@@ -1,14 +1,13 @@
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>              /* Definition of O_* constants */
 #include <unistd.h>
 #include "ipc.h"
 #include "pa1.h"
-#include <time.h>
 
-#define NULL 0
+//#define NULL 0
+
+#define EVENTS_LOG_FILE_NAME "events.log"
 
 struct MessageHeader {
 };
@@ -29,6 +28,10 @@ typedef struct {
 PipeInputOutputStream2 streams[256][256];
 ProcessInfo process_info;
 
+FILE *events_log_file;
+
+FILE *pipes_log_file;
+
 void close_fds(int curId, int x) {
     for (int i = 0; i < x; i++) {
         if (i == curId) {
@@ -47,10 +50,8 @@ void close_fds(int curId, int x) {
 int send(void *self, local_id dst, const Message *msg) {
     const ssize_t written = write(streams[process_info.id][dst].outputStream, msg, sizeof(Message));
     if (written < sizeof(Message)) {
-        printf("%d: sent insufficient number of bytes\n", process_info.id);
         return 1;
     }
-    printf("%d: sent to %d: %s\n", process_info.id, dst, msg->s_payload);
 
     return 0;
 }
@@ -68,10 +69,8 @@ int send_multicast(void *self, const Message *msg) {
 int receive(void *self, local_id from, Message *msg) {
     ssize_t count = read(streams[process_info.id][from].inputStream, msg, sizeof(Message));
     if (count < sizeof(Message)) {
-        printf("%d: received insufficient number of bytes", process_info.id);
         return 1;
     }
-    printf("%d: received from %d: %s\n", process_info.id, from, msg->s_payload);
 
     return 0;
 }
@@ -98,12 +97,17 @@ int child() {
         .s_payload="STARTED"
     };
 
-    sprintf(startMessage.s_payload, log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
+    printf(log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
+    fprintf(events_log_file, log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
 
     close_fds(process_info.id, process_info.count);
     send_multicast(0, &startMessage);
 
     receive_multicast(0, &startMessage);
+
+    printf(log_received_all_started_fmt, process_info.id);
+    fprintf(events_log_file, startMessage.s_payload, log_received_all_started_fmt, process_info.id);
+
 
     Message doneMessage = {
             .s_header = {
@@ -115,11 +119,16 @@ int child() {
             .s_payload="DONE"
     };
 
-    printf("%d: working\n", process_info.id);
     // working...
+    printf(log_done_fmt, process_info.id);
+    fprintf(events_log_file, log_done_fmt, process_info.id);
+
     send_multicast(0, &doneMessage);
 
     receive_multicast(0, &doneMessage);
+
+    printf(log_received_all_done_fmt, process_info.id);
+    fprintf(events_log_file, log_received_all_done_fmt, process_info.id);
 
     return 0;
 }
@@ -132,19 +141,25 @@ int main(int argc, char *argv[]) {
     }
 
     char *arg = NULL;
-    int8_t x = NULL;
+    int8_t x = 0;
     for (int i = 1; i < argc; i++) {
         arg = strtok(argv[i], " ");
         if (strcmp(arg, "-p") == 0) {
             x = atoi(argv[i + 1]);
-            printf("%d\n", x);
+//            printf("%d\n", x);
         }
     }
-    if (x == NULL || x <= 0) {
+    if (x <= 0) {
         printf("error NULL\n");
         return 1;
     }
-    printf("%d\n", x);
+
+    events_log_file = fopen(EVENTS_LOG_FILE_NAME, "w");
+
+    if (events_log_file == NULL){
+        printf("error opening events log file!");
+        return 1;
+    }
 
     for (int curId = 0; curId < x; curId++) {
         for (int neighbourId = curId + 1; neighbourId <= x; neighbourId++) {
@@ -156,7 +171,7 @@ int main(int argc, char *argv[]) {
                 printf("error while piping 1\n");
                 return 1;
             }
-            printf("%d-%d, %d | %d\n", curId, neighbourId, fds[0], fds[1]);
+//            printf("%d-%d, %d | %d\n", curId, neighbourId, fds[0], fds[1]);
 
             streams[curId][neighbourId].inputStream = fds[0];
             streams[neighbourId][curId].outputStream = fds[1];
@@ -165,7 +180,7 @@ int main(int argc, char *argv[]) {
                 printf("error while piping 2\n");
                 return 1;
             }
-            printf("%d-%d, %d | %d\n", curId, neighbourId, fds[0], fds[1]);
+//            printf("%d-%d, %d | %d\n", curId, neighbourId, fds[0], fds[1]);
 
             streams[curId][neighbourId].outputStream = fds[1];
             streams[neighbourId][curId].inputStream = fds[0];
@@ -187,8 +202,8 @@ int main(int argc, char *argv[]) {
             process_info = (ProcessInfo){
                 .id = curId,
                 .count = x,
-                .pid = getpid,
-                .ppid = getppid
+                .pid = getpid(),
+                .ppid = getppid()
             };
             return child();
         }
@@ -202,7 +217,7 @@ int main(int argc, char *argv[]) {
     receive_multicast(0, &doneMessage);
 
     for (int curId = 0; curId < x; curId++) {
-        waitpid(pids[curId], NULL, NULL);
+        waitpid(pids[curId], NULL, 0);
     }
 
     return 0;
