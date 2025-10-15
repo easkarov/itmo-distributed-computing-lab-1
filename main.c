@@ -1,17 +1,15 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>              /* Definition of O_* constants */
 #include <unistd.h>
 #include "ipc.h"
 #include "pa1.h"
-
-//#define NULL 0
+#include <time.h>
+#include <sys/wait.h>    // для waitpid
 
 #define EVENTS_LOG_FILE_NAME "events.log"
-
-struct MessageHeader {
-};
-
 
 typedef struct {
     int inputStream;
@@ -30,17 +28,12 @@ ProcessInfo process_info;
 
 FILE *events_log_file;
 
-FILE *pipes_log_file;
-
 void close_fds(int curId, int x) {
-    for (int i = 0; i < x; i++) {
+    for (int i = 0; i <= x; i++) {
         if (i == curId) {
             continue;
         }
-        for (int j = 0; j < x; j++) {
-            if (j == curId) {
-                continue;
-            }
+        for (int j = 0; j <= x; j++) {
             close(streams[i][j].outputStream);
             close(streams[i][j].inputStream);
         }
@@ -90,12 +83,12 @@ int child() {
     Message startMessage = {
         .s_header = {
             .s_magic = MESSAGE_MAGIC,
-            .s_payload_len = 8,
             .s_type = STARTED,
             .s_local_time = (short) (process_info.id * 10 + 1),
-        },
-        .s_payload="STARTED"
+        }
     };
+    sprintf(startMessage.s_payload, log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
+    startMessage.s_header.s_payload_len = strlen(startMessage.s_payload) + 1;
 
     printf(log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
     fprintf(events_log_file, log_started_fmt, process_info.id, process_info.pid, process_info.ppid);
@@ -112,12 +105,13 @@ int child() {
     Message doneMessage = {
             .s_header = {
                     .s_magic = MESSAGE_MAGIC,
-                    .s_payload_len = 5,
-                    .s_type = STARTED,
+                    .s_type = DONE,
                     .s_local_time = (short) (process_info.id * 10 + 1),
             },
-            .s_payload="DONE"
     };
+
+    sprintf(doneMessage.s_payload, log_done_fmt, process_info.id);
+    doneMessage.s_header.s_payload_len = strlen(doneMessage.s_payload) + 1;
 
     // working...
     printf(log_done_fmt, process_info.id);
@@ -146,7 +140,6 @@ int main(int argc, char *argv[]) {
         arg = strtok(argv[i], " ");
         if (strcmp(arg, "-p") == 0) {
             x = atoi(argv[i + 1]);
-//            printf("%d\n", x);
         }
     }
     if (x <= 0) {
@@ -161,9 +154,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    for (int curId = 0; curId < x; curId++) {
+    for (int curId = 0; curId <= x; curId++) {
         for (int neighbourId = curId + 1; neighbourId <= x; neighbourId++) {
             if (neighbourId == curId) {
+                continue;
+            }
+            if (streams[curId][neighbourId].inputStream != 0 || streams[curId][neighbourId].outputStream != 0){
                 continue;
             }
             int fds[2];
@@ -171,7 +167,6 @@ int main(int argc, char *argv[]) {
                 printf("error while piping 1\n");
                 return 1;
             }
-//            printf("%d-%d, %d | %d\n", curId, neighbourId, fds[0], fds[1]);
 
             streams[curId][neighbourId].inputStream = fds[0];
             streams[neighbourId][curId].outputStream = fds[1];
@@ -180,7 +175,6 @@ int main(int argc, char *argv[]) {
                 printf("error while piping 2\n");
                 return 1;
             }
-//            printf("%d-%d, %d | %d\n", curId, neighbourId, fds[0], fds[1]);
 
             streams[curId][neighbourId].outputStream = fds[1];
             streams[neighbourId][curId].inputStream = fds[0];
@@ -210,13 +204,13 @@ int main(int argc, char *argv[]) {
         pids[curId - 1] = childPid;
     }
 
-    Message startMessage = {0};
-    Message doneMessage = {0};
+    Message startMessage;
+    Message doneMessage;
 
     receive_multicast(0, &startMessage);
     receive_multicast(0, &doneMessage);
 
-    for (int curId = 0; curId < x; curId++) {
+    for (int curId = 0; curId <= x; curId++) {
         waitpid(pids[curId], NULL, 0);
     }
 
